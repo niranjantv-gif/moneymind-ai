@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MoneyMind AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef2ef;--card:#fff;--ink:#14213d;--mute:#5b6676;--line:#d5ddd8;--safe:#0f766e;--tight:#b7791f;--danger:#d64525;--accent:#14213d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Bricolage Grotesque",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:16px 24px;background:var(--ink);color:#fff}
+header b{font-size:20px;letter-spacing:-.3px}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{background:none;border:0;color:#b9c4d6;padding:8px 14px;border-radius:8px;font:inherit;cursor:pointer}
+nav button.on{background:#fff;color:var(--ink);font-weight:700}
+#mode{font-size:13px;color:#b9c4d6}
+main{max-width:980px;margin:0 auto;padding:24px 16px 64px}
+section{display:none}section.on{display:block}
+h1{font-size:44px;line-height:1.05;margin:0 0 4px;letter-spacing:-1.5px}
+h2{font-size:22px;margin:24px 0 8px;letter-spacing:-.3px}
+p.sub{color:var(--mute);margin:0 0 20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+.box small{color:var(--mute);display:block}.box strong{font-size:26px}
+.row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border:0}.pos{color:var(--safe)}.neg{color:var(--danger)}
+label{display:block;font-size:14px;color:var(--mute);margin-bottom:4px}
+input{font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:10px;width:100%;background:#fff;color:var(--ink)}
+.form{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:12px;align-items:end;margin-bottom:16px}
+.go{background:var(--ink);color:#fff;border:0;border-radius:10px;padding:11px 20px;font:inherit;font-weight:700;cursor:pointer}
+.go:focus-visible,nav button:focus-visible,.chip:focus-visible,input:focus-visible{outline:3px solid #7aa7ff;outline-offset:2px}
+.sc{border-left:6px solid var(--line)}
+.sc.safe{border-color:var(--safe)}.sc.tight{border-color:var(--tight)}.sc.danger{border-color:var(--danger)}
+.tag{font-weight:700}.safe .tag{color:var(--safe)}.tight .tag{color:var(--tight)}.danger .tag{color:var(--danger)}
+svg{width:100%;height:auto;background:#fff;border:1px solid var(--line);border-radius:14px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.chip{border:1px solid var(--ink);background:#fff;color:var(--ink);border-radius:99px;padding:6px 14px;font:inherit;cursor:pointer}
+.chip.on{background:var(--ink);color:#fff}
+.banner{padding:16px;border-radius:14px;font-size:20px;font-weight:700;color:#fff}
+.banner.safe{background:var(--safe)}.banner.tight{background:var(--tight)}.banner.danger{background:var(--danger)}
+ul{padding-left:20px}li{margin:6px 0}
+@media(max-width:700px){.form{grid-template-columns:1fr 1fr}h1{font-size:34px}}
+</style></head><body>
+<header><b>MoneyMind AI</b>
+<nav id="nav"></nav><span id="mode">connecting…</span></header>
+<main>
+<section id="dash" class="on">
+  <p class="sub">Your money today, and what's already committed.</p>
+  <h1 id="bal"></h1><p class="sub">available balance</p>
+  <div class="grid" id="stats"></div>
+  <h2>Upcoming money in and out</h2><div class="box" id="events"></div>
+</section>
+<section id="sim">
+  <h2 style="margin-top:0">What happens if I buy this?</h2>
+  <div class="form">
+    <div><label for="item">What is it?</label><input id="item" value="Headphones"></div>
+    <div><label for="amt">Price (₹)</label><input id="amt" type="number" value="3500"></div>
+    <div><label for="day">Buy on day</label><input id="day" type="number" min="1" max="30" value="2"></div>
+    <button class="go" id="run">Simulate</button>
+  </div>
+  <div class="grid" id="scs"></div>
+</section>
+<section id="time">
+  <h2 style="margin-top:0">Projected balance, next 30 days</h2>
+  <p class="sub" id="tsub">Run a purchase in the simulator to compare outcomes here.</p>
+  <svg id="chart" viewBox="0 0 760 320" role="img" aria-label="Projected balance chart"></svg>
+  <div class="chips" id="legend"></div>
+</section>
+<section id="why">
+  <h2 style="margin-top:0">Why this warning?</h2>
+  <div id="exp"><p class="sub">Run a purchase in the simulator first.</p></div>
+</section>
+</main>
+<script>
+const API = "http://localhost:8000", $ = s => document.querySelector(s), inr = x => "₹" + Math.round(x).toLocaleString("en-IN");
+const COL = {skip:"#8a94a6",now:"#d64525",wait:"#0f766e",split:"#b7791f",trim:"#5b4bd6"};
+let S = {dash:null, sim:null, ex:null, req:null, pick:null};
+
+/* ---- Local engine: same logic as backend, used if the API is offline ---- */
+const P = {balance:9000,daily:200,buffer:1000,events:[
+ {day:3,name:"Pocket money",amount:10000},{day:5,name:"Rent",amount:-8000},{day:9,name:"Mobile recharge",amount:-399},
+ {day:12,name:"Subscriptions",amount:-199},{day:15,name:"Course fee",amount:-3500},{day:20,name:"Freelance pay",amount:4000}]};
+function forecast(extra=[],cut=0){let b=P.balance;return Array.from({length:30},(_,i)=>{const d=i+1;
+ b-=P.daily*(1-cut);P.events.filter(e=>e.day==d).forEach(e=>b+=e.amount);extra.filter(x=>x.day==d).forEach(x=>b-=x.amount);return{day:d,balance:Math.round(b)}})}
+function summarize(p){const l=p.reduce((a,c)=>c.balance<a.balance?c:a),n=p.find(x=>x.balance<0);
+ return{min:l.balance,min_day:l.day,end:p[29].balance,first_negative:n?n.day:null,status:l.balance<0?"danger":l.balance<P.buffer?"tight":"safe"}}
+function scenarios(a,d){const nx=Math.max(30*0,...P.events.filter(e=>e.amount>0&&e.day>d).map(e=>e.day))||30;
+ return[["skip","Don't buy",[],0],["now",`Buy on day ${d}`,[{day:d,amount:a}],0],["wait",`Wait until day ${nx}`,[{day:nx,amount:a}],0],
+ ["split","Pay in 2 halves",[{day:d,amount:a/2},{day:Math.min(d+14,30),amount:a/2}],0],["trim","Buy now + cut daily spend 20%",[{day:d,amount:a}],.2]]
+ .map(([id,label,ex,c])=>{const points=forecast(ex,c);return{id,label,points,summary:summarize(points)}})}
+function explain(item,a,d){const sc=scenarios(a,d),n=sc[1].summary,r=[],alts=[];let h;
+ if(n.status=="safe")h=`Safe to buy: your lowest balance stays at ${inr(n.min)}.`;
+ else{h=n.status=="danger"?"Warning: this would take you below zero.":"Caution: this leaves you under your safety buffer.";
+  r.push(`Buying ${item} for ${inr(a)} on day ${d} pushes your lowest balance to ${inr(n.min)} on day ${n.min_day}.`);
+  const due=P.events.filter(e=>e.amount<0&&e.day>=d&&e.day<=n.min_day);
+  if(due.length)r.push("Commitments landing before that low point: "+due.map(e=>`${e.name} ${inr(-e.amount)} (day ${e.day})`).join(", ")+".");
+  if(n.first_negative)r.push(`You'd run out of money on day ${n.first_negative}.`);
+  sc.slice(2).forEach(s=>{if(s.summary.status!="danger")alts.push(`${s.label}: lowest balance ${inr(s.summary.min)} (${s.summary.status}).`)})}
+ return{headline:h,reasons:r,alternatives:alts,status:n.status}}
+function local(path,b){
+ if(path=="/api/dashboard"){const p=forecast(),ev=P.events;return{balance:P.balance,daily:P.daily,buffer:P.buffer,events:ev,
+  commitments:-ev.filter(e=>e.amount<0).reduce((s,e)=>s+e.amount,0),income:ev.filter(e=>e.amount>0).reduce((s,e)=>s+e.amount,0),points:p,summary:summarize(p)}}
+ if(path=="/api/simulate")return{scenarios:scenarios(b.amount,b.day)};
+ return explain(b.item,b.amount,b.day)}
+async function api(path,body){
+ try{const r=await fetch(API+path,body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}:{});
+  if(!r.ok)throw 0;$("#mode").textContent="● Live API";return await r.json()}
+ catch(e){$("#mode").textContent="● Offline demo engine";return local(path,body)}}
+
+/* ---- Chart ---- */
+function chart(series){const W=760,H=320,m={l:64,r:16,t:16,b:32},all=series.flatMap(s=>s.points.map(p=>p.balance));
+ const lo=Math.min(0,...all)-500,hi=Math.max(P.buffer,...all)+500,x=d=>m.l+(d-1)/29*(W-m.l-m.r),y=v=>m.t+(hi-v)/(hi-lo)*(H-m.t-m.b);
+ let g=`<rect x="${m.l}" y="${y(0)}" width="${W-m.l-m.r}" height="${y(lo)-y(0)}" fill="#d64525" opacity=".1"/>`;
+ for(let i=0;i<5;i++){const v=lo+(hi-lo)*i/4;g+=`<line x1="${m.l}" x2="${W-m.r}" y1="${y(v)}" y2="${y(v)}" stroke="#e6ece8"/><text x="${m.l-8}" y="${y(v)+4}" text-anchor="end" font-size="11" fill="#5b6676">${inr(v)}</text>`}
+ for(let d=1;d<=30;d+=(d==1?4:5))g+=`<text x="${x(d)}" y="${H-10}" text-anchor="middle" font-size="11" fill="#5b6676">day ${d}</text>`;
+ g+=`<line x1="${m.l}" x2="${W-m.r}" y1="${y(0)}" y2="${y(0)}" stroke="#d64525" stroke-width="1.5"/><line x1="${m.l}" x2="${W-m.r}" y1="${y(P.buffer)}" y2="${y(P.buffer)}" stroke="#b7791f" stroke-dasharray="5 4"/>`;
+ series.forEach(s=>g+=`<polyline fill="none" stroke="${s.color}" stroke-width="${s.w||2.5}" ${s.dash?'stroke-dasharray="6 4"':""} points="${s.points.map(p=>x(p.day)+","+y(p.balance)).join(" ")}"/>`);
+ $("#chart").innerHTML=g}
+
+/* ---- Screens ---- */
+async function loadDash(){const d=S.dash=await api("/api/dashboard");
+ $("#bal").textContent=inr(d.balance);
+ $("#stats").innerHTML=[["Committed this month",inr(d.commitments)],["Expected income",inr(d.income)],["Daily living spend",inr(d.daily)],["Lowest point ahead",`${inr(d.summary.min)} (day ${d.summary.min_day})`]]
+  .map(([a,b])=>`<div class="box"><small>${a}</small><strong>${b}</strong></div>`).join("");
+ $("#events").innerHTML=d.events.map(e=>`<div class="row"><span>Day ${e.day} · ${e.name}</span><b class="${e.amount>0?"pos":"neg"}">${e.amount>0?"+":"−"}${inr(Math.abs(e.amount))}</b></div>`).join("");
+ if(!S.sim)drawTime()}
+function drawTime(){const sc=S.sim;const pick=S.pick;
+ const series=sc?sc.filter(s=>!pick||s.id==pick||s.id=="skip").map(s=>({points:s.points,color:COL[s.id],dash:s.id=="skip",w:s.id==pick?4:2.5}))
+  :[{points:S.dash.points,color:COL.skip}];
+ chart(series);
+ $("#legend").innerHTML=sc?sc.map(s=>`<button class="chip ${pick==s.id?"on":""}" data-id="${s.id}" style="border-color:${COL[s.id]}">${s.label}</button>`).join(""):"";
+ $("#tsub").textContent=sc?"Red zone = overdrawn. Dashed amber line = your ₹1,000 safety buffer. Tap a scenario to isolate it.":"Showing your baseline. Run a purchase in the simulator to compare outcomes here."}
+async function simulate(){S.req={item:$("#item").value||"Purchase",amount:+$("#amt").value||0,day:Math.min(30,Math.max(1,+$("#day").value||1))};
+ S.sim=(await api("/api/simulate",S.req)).scenarios;S.pick=null;
+ $("#scs").innerHTML=S.sim.map(s=>`<div class="box sc ${s.summary.status}"><b>${s.label}</b><div class="tag">${s.summary.status.toUpperCase()}</div>
+  <small>Lowest: ${inr(s.summary.min)} on day ${s.summary.min_day}</small><small>Day 30: ${inr(s.summary.end)}</small>
+  ${s.summary.first_negative?`<small class="neg">Overdrawn from day ${s.summary.first_negative}</small>`:""}</div>`).join("");
+ drawTime();const e=S.ex=await api("/api/explain",S.req);
+ $("#exp").innerHTML=`<div class="banner ${e.status}">${e.headline}</div>
+  ${e.reasons.length?`<h2>Why</h2><ul>${e.reasons.map(r=>`<li>${r}</li>`).join("")}</ul>`:""}
+  ${e.alternatives.length?`<h2>Try instead</h2><ul>${e.alternatives.map(r=>`<li>${r}</li>`).join("")}</ul><p class="sub">Open the Timeline to see each option plotted.</p>`:""}`}
+
+/* ---- Wiring ---- */
+const tabs=[["dash","Dashboard"],["sim","Simulator"],["time","Timeline"],["why","Explanation"]];
+$("#nav").innerHTML=tabs.map(([id,t])=>`<button data-t="${id}" class="${id=="dash"?"on":""}">${t}</button>`).join("");
+$("#nav").onclick=e=>{const t=e.target.dataset.t;if(!t)return;document.querySelectorAll("section,nav button").forEach(n=>n.classList.remove("on"));$("#"+t).classList.add("on");e.target.classList.add("on")};
+$("#run").onclick=async()=>{await simulate();document.querySelector('[data-t="sim"]').click()};
+$("#legend").onclick=e=>{const id=e.target.dataset.id;if(id){S.pick=S.pick==id?null:id;drawTime()}};
+loadDash();
+</script></body></html>
